@@ -20,6 +20,6 @@ T="tar --owner=0 --group=0 --numeric-owner"
 (cd "$WORK/control" && $T -czf ../control.tar.gz ./)
 (cd "$WORK/data" && $T -czf ../data.tar.gz ./)
 mkdir -p "$OUT"
-rm -f "$OUT"/hrneo_*_"$ARCH".ipk
+rm -f "$OUT"/hrneo_*_"$ARCH".ipk "$OUT"/hrneo_*_"$ARCH".ipk.source
 (cd "$WORK" && $T -czf "$OUT/hrneo_${VER}_${ARCH}.ipk" ./debian-binary ./control.tar.gz ./data.tar.gz)
 echo "$OUT/hrneo_${VER}_${ARCH}.ipk"

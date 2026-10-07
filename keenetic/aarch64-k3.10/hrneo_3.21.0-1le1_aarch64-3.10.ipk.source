@@ -1,0 +1,6 @@
+# Written after publishing: this package predates provenance in tools/build.sh.
+# A rebuild of the commit below in the image below gives a byte-identical binary.
+version 3.21.0-1le1
+commit 8662324b582bf7d0602c585589d36aad64d8e20d
+image sha256:d9ecb1e482d15f333b17c8577fbab953dae5dd78718b0ea48c50231eace16fb4
+binary cddbfd3c2605c895a807df6b20717d595896a68b12981a5695fc3521920b9c32
