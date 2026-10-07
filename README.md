@@ -14,3 +14,8 @@ Changes in 3.21.0-1le1: HydraRoute CONNMARK rules are restored on every netfilte
 instead of up to 3 s later, and live ipset entries get their timeout refreshed.
 
 Install on Keenetic (Entware): `curl -fsSL https://le0nus.github.io/hydraroute-release/keenetic/install-feed.sh | sh`
+
+The installer installs the fork's package even when another feed (upstream's) has a higher
+hrneo version, checks that the fork version ended up installed and holds it. Run it again to
+update to a newer fork version. The hold stops `opkg upgrade`, but `opkg install hrneo` still
+takes the highest version across feeds and would replace the fork with upstream's package.
