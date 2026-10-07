@@ -11,5 +11,5 @@ docker run --rm -v "$HR/Neo/source":/src -v "$ROOT":/release -w /src hrneo-build
   make check
   make aarch64 CC_AARCH64=gcc VERSION=$VER
   ./build/hrneo-aarch64 --version
-  # /release/tools/build-ipk.sh /src build/hrneo-aarch64 $VER aarch64-3.10 /release/keenetic/aarch64-k3.10
+  /release/tools/build-ipk.sh /src build/hrneo-aarch64 $VER aarch64-3.10 /release/keenetic/aarch64-k3.10
 "
