@@ -45,10 +45,14 @@ mkdir -p "$T/fakes" "$SYS"
 cat > "$T/fakes/opkg" <<'EOF'
 #!/bin/sh
 # Fake Entware opkg. State in $ST: version (empty: hrneo not installed),
-# want (none: install), flags, state. Knobs: arch, arch_rc, update_rc, status_rc, compare_rc,
-# flag_mode (fail: exit 1; noop: says it set the flag and does not),
-# install_modes (one line per install: ok, fail-before, nothing,
-# postinst-fails, fail-after, unpacked-ok; none left: ok).
+# want (none: install), flags, state. Knobs: arch, arch_rc, update_rc,
+# status_rc, status_fail_calls (numbers of the status calls that fail),
+# compare_rc, flag_mode (fail: exit 1; noop: says it set the flag and does
+# not; noop-hold: the same for hold only), install_modes (one line per install: ok, fail-before, nothing,
+# postinst-fails, fail-after, unpacked-ok; none left: ok), install_hang
+# (install writes installer.pid and opkg.pid, then waits for $ST/go before
+# it changes anything; a kill then leaves the state as it was), hold_hang
+# (the same for "flag hold", with hold.pid and $ST/go2).
 echo "opkg $*" >> "$ST/log"
 knob() { cat "$ST/$1" 2>/dev/null; }
 VERCMP='
@@ -100,6 +104,11 @@ case "$1" in
         [ ! -s "$ST/version" ] || echo "hrneo - $(knob version)"
         ;;
     status)
+        n=$(($(knob status_calls || echo 0) + 1))
+        echo "$n" > "$ST/status_calls"
+        for c in $(knob status_fail_calls); do
+            [ "$c" != "$n" ] || exit 255
+        done
         rc=$(knob status_rc)
         [ "$rc" = 0 ] || exit "$rc"
         [ -s "$ST/version" ] || exit 0
@@ -107,12 +116,20 @@ case "$1" in
             "$(knob version)" "$(knob want)" "$(knob flags)" "$(knob state)"
         ;;
     flag)
+        if [ "$2" = hold ] && [ -e "$ST/hold_hang" ]; then
+            echo "$PPID" > "$ST/installer.pid"
+            echo "$$" > "$ST/hold.pid"
+            while [ ! -e "$ST/go2" ]; do usleep 20000; done
+        fi
         [ "$(knob flag_mode)" != fail ] || exit 1
         if [ ! -s "$ST/version" ]; then
             echo " * opkg_flag_cmd: Package $3 is not installed." >&2
             exit 0
         fi
-        [ "$(knob flag_mode)" = noop ] || echo "$2" > "$ST/flags"
+        case "$(knob flag_mode):$2" in
+            noop:*|noop-hold:hold) ;;
+            *) echo "$2" > "$ST/flags" ;;
+        esac
         echo "Setting flags for package $3 to $2."
         ;;
     install)
@@ -124,6 +141,11 @@ case "$1" in
         done
         new=$(tar -xzOf "$1" ./control.tar.gz | tar -xzOf - ./control | awk '$1 == "Version:" {print $2}')
         [ -n "$new" ] || { echo " * opkg_install_cmd: Cannot read $1." >&2; exit 255; }
+        if [ -e "$ST/install_hang" ]; then
+            echo "$PPID" > "$ST/installer.pid"
+            echo "$$" > "$ST/opkg.pid"
+            while [ ! -e "$ST/go" ]; do usleep 20000; done
+        fi
         mode=$(head -n 1 "$ST/install_modes")
         sed -i 1d "$ST/install_modes"
         old=$(knob version)
@@ -320,6 +342,30 @@ out_has() {
 
 out_lacks() {
     if grep -qF -e "$1" "$T/out"; then fail "output has '$1': $(cat "$T/out")"; fi
+}
+
+# run_signalled <signal> <exit code> <finish|killed>: runs the installer and,
+# once opkg install has started in the fake, sends the signal to the
+# installer alone; then opkg is let finish its job, or is killed as well
+# (as a Ctrl-C to the whole process group would).
+run_signalled() {
+    touch "$ST/install_hang"
+    (
+        n=0
+        while [ ! -s "$ST/opkg.pid" ] && [ "$n" -lt 500 ]; do
+            usleep 20000
+            n=$((n + 1))
+        done
+        kill -"$1" "$(cat "$ST/installer.pid")"
+        usleep 200000
+        if [ "$3" = killed ]; then
+            kill -TERM "$(cat "$ST/opkg.pid")"
+        else
+            touch "$ST/go"
+        fi
+    ) &
+    run "$2"
+    wait
 }
 
 state_is() {    # <version> <flags> <state>: and the want is install
@@ -809,9 +855,11 @@ curl $URL/$LE2
 opkg flag user hrneo
 opkg install TMP/$LE2
 opkg status hrneo
-opkg flag hold hrneo"
+opkg flag hold hrneo
+opkg status hrneo"
 state_is 3.21.0-1le1 hold installed
 out_has "opkg install exited with code 255"
+out_has "hrneo 3.21.0-1le1 is held again"
 out_has "run this installer again"
 : > "$ST/log"
 run 0
@@ -864,6 +912,111 @@ run 1
 out_has "opkg install exited with code 0"
 out_has "3.21.0-1le1"
 state_is 3.21.0-1le1 hold installed
+
+# Once the hold of the installed package is released, every way out but
+# success puts it back and checks it: a status error, a failed command, a
+# signal (after opkg has finished). The exit code stays that of the cause.
+scenario status-fails-after-install
+installed 3.21.0-1le1 hold
+echo 2 > "$ST/status_fail_calls"
+run 1
+log_is "$HEAD_LOG
+opkg compare-versions 3.21.0-1le1 >> 1:3.21.0-1le2
+curl $URL/$LE2
+opkg flag user hrneo
+opkg install TMP/$LE2
+opkg status hrneo
+opkg flag hold hrneo
+opkg status hrneo"
+state_is 1:3.21.0-1le2 hold installed
+out_has "opkg status hrneo failed"
+out_has "hrneo 1:3.21.0-1le2 is held again"
+
+scenario status-fails-after-failed-install
+installed 3.21.0-1le1 hold
+echo fail-before > "$ST/install_modes"
+echo 2 > "$ST/status_fail_calls"
+run 1
+state_is 3.21.0-1le1 hold installed
+out_has "hrneo 3.21.0-1le1 is held again"
+
+scenario status-keeps-failing-after-install
+installed 3.21.0-1le1 hold
+echo 2 3 4 5 6 > "$ST/status_fail_calls"
+run 1
+state_is 1:3.21.0-1le2 hold installed
+out_has "the hold is not confirmed"
+
+scenario flag-user-fails
+# Nothing could be changed, and the hold cannot be set either: said so.
+installed 3.21.0-1le1 hold
+echo fail > "$ST/flag_mode"
+run 1
+log_lacks "^opkg install"
+state_is 3.21.0-1le1 hold installed
+out_has "opkg flag user hrneo failed"
+out_has "may be left without its hold"
+
+for sig in HUP:129 INT:130 PIPE:141 TERM:143; do
+    s=${sig%%:*}
+    code=${sig#*:}
+    scenario "signal-$s-during-install"
+    # opkg finishes the install; the new package gets the hold back.
+    installed 3.21.0-1le1 hold
+    run_signalled "$s" "$code" finish
+    log_is "$HEAD_LOG
+opkg compare-versions 3.21.0-1le1 >> 1:3.21.0-1le2
+curl $URL/$LE2
+opkg flag user hrneo
+opkg install TMP/$LE2
+opkg flag hold hrneo
+opkg status hrneo"
+    state_is 1:3.21.0-1le2 hold installed
+    out_has "hrneo 1:3.21.0-1le2 is held again"
+
+    scenario "signal-$s-kills-install"
+    # opkg dies of it too, before changing anything: the old package is held again.
+    installed 3.21.0-1le1 hold
+    run_signalled "$s" "$code" killed
+    state_is 3.21.0-1le1 hold installed
+    out_has "hrneo 3.21.0-1le1 is held again"
+done
+
+scenario hold-does-not-come-back
+# opkg flag hold says it worked, but opkg status shows no hold: said so.
+installed 3.21.0-1le1 hold
+echo fail-before > "$ST/install_modes"
+echo noop-hold > "$ST/flag_mode"
+run 1
+state_is 3.21.0-1le1 user installed
+out_has "hrneo 3.21.0-1le1 is still not held: run opkg flag hold hrneo"
+
+scenario signal-while-putting-hold-back
+# A Ctrl-C while the hold goes back (to the installer and to that opkg) does
+# not cut it short.
+installed 3.21.0-1le1 hold
+echo fail-before > "$ST/install_modes"
+touch "$ST/hold_hang"
+(
+    n=0
+    while [ ! -s "$ST/hold.pid" ] && [ "$n" -lt 500 ]; do
+        usleep 20000
+        n=$((n + 1))
+    done
+    kill -INT "$(cat "$ST/installer.pid")" "$(cat "$ST/hold.pid")"
+    usleep 200000
+    touch "$ST/go2"
+) &
+run 1
+wait
+state_is 3.21.0-1le1 hold installed
+out_has "hrneo 3.21.0-1le1 is held again"
+
+scenario signal-INT-during-fresh-install
+# Nothing was held before: nothing to put back.
+run_signalled INT 130 finish
+log_lacks "^opkg flag"
+state_is 1:3.21.0-1le2 user installed
 
 scenario install-ok-but-unpacked
 # opkg says nothing went wrong, but hrneo is not configured: not held, not done.

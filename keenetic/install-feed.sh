@@ -9,24 +9,61 @@
 # downloaded here and installed only if its size and sha256 match the feed's
 # index, because opkg checks SHA256sum only for packages it downloads itself.
 # Exit code 0: hrneo from the feed is installed and held; 1: it is not, and the
-# message says why and what to do; 129, 130, 143: stopped by HUP, INT, TERM.
-# Its temporary directory goes in every case.
+# message says why and what to do; 129, 130, 141, 143: stopped by HUP, INT,
+# PIPE, TERM. If it released the hold of an installed hrneo, every way out
+# but success puts the hold back first. Its temporary directory goes in every
+# case.
 set -eu
 
 BASE="https://raw.githubusercontent.com/le0nus/hydraroute-release/main/keenetic"
 FEED=le0nus-hr
 CONF=/opt/etc/opkg/customfeeds.conf
 TMP=
+RESTORE_HOLD=
 
 die() {
     echo "install-feed: $*" >&2
     exit 1
 }
 
-cleanup() {
+# Runs on every exit, signals included. A signal is taken only once the
+# command running then (opkg install, say) has finished, and no other is taken
+# from here on, so nothing cuts the hold back short. The exit code stays.
+on_exit() {
+    EXIT_CODE=$?
+    set +e
+    trap '' HUP INT PIPE TERM
+    if [ -n "$RESTORE_HOLD" ]; then
+        RESTORE_HOLD=
+        restore_hold
+    fi
     if [ -n "$TMP" ]; then
         rm -rf "$TMP"
     fi
+    exit "$EXIT_CODE"
+}
+
+# This run released the hold of the installed hrneo and ends some other way
+# than success: hold whatever hrneo is installed now, check, and say so.
+restore_hold() {
+    if ! opkg flag hold hrneo > /dev/null 2>&1; then
+        echo "install-feed: opkg flag hold hrneo failed; hrneo may be left without its hold, and opkg upgrade may replace it: run opkg flag hold hrneo" >&2
+        return
+    fi
+    if ! STATUS=$(opkg status hrneo 2> /dev/null); then
+        echo "install-feed: opkg flag hold hrneo ran, but opkg status hrneo failed, so the hold is not confirmed: check opkg status hrneo" >&2
+        return
+    fi
+    HELD=$(printf '%s\n' "$STATUS" | awk '
+        $1 == "Package:" { p = ($2 == "hrneo") }
+        p && $1 == "Version:" { v = $2 }
+        p && $1 == "Status:" { f = $3 }
+        END { if (v != "") print v, (("," f ",") ~ /,hold,/ ? "held" : "not-held") }')
+    case $HELD in
+        '') echo "install-feed: hrneo is not installed any more; there is no hold to put back" >&2 ;;
+        *" held") echo "install-feed: hrneo ${HELD% held} is held again" >&2 ;;
+        *) echo "install-feed: hrneo ${HELD% not-held} is still not held: run opkg flag hold hrneo" >&2 ;;
+    esac
 }
 
 fetch() {
@@ -192,12 +229,9 @@ EOF
     exit 1
 }
 
-# opkg install failed or left hrneo short of WANT installed: put back the
-# hold the installed package had and say what to do.
+# opkg install failed or left hrneo short of WANT installed: say what to do.
+# A hold this run released goes back on the way out.
 install_failed() {
-    if [ -n "$CUR" ] && [ -n "$WAS_HELD" ]; then
-        opkg flag hold hrneo > /dev/null || echo "install-feed: opkg flag hold hrneo failed too" >&2
-    fi
     cat >&2 <<EOF
 install-feed: opkg install exited with code $RC; opkg status shows hrneo ${CUR:-not installed}${CUR:+, status $CUR_WANT $CUR_FLAGS $CUR_STATE}; expected $WANT installed.
 See the opkg output above. Fix what it names and run this installer again: it
@@ -225,9 +259,10 @@ main() {
     command -v curl > /dev/null 2>&1 || command -v wget > /dev/null 2>&1 ||
         die "neither curl nor wget found; opkg install curl and run this again"
 
-    trap cleanup EXIT
+    trap on_exit EXIT
     trap 'exit 129' HUP
     trap 'exit 130' INT
+    trap 'exit 141' PIPE
     trap 'exit 143' TERM
     TMP=$(mktemp -d) || die "mktemp -d failed"
     [ -d "$TMP" ] || die "mktemp -d made no directory"
@@ -267,11 +302,11 @@ main() {
     [ "$GOT" = "$SUM" ] || die "sha256 of $IPK is $GOT, $BASE/$DIR/Packages says $SUM; not installing"
 
     # The hold is released for the install, as the stage-1 installer did, and
-    # set again below; if the install fails, the old package gets it back.
-    WAS_HELD=
+    # set again below. From here until that is confirmed, any way out (an
+    # error, a failed command, a signal) puts it back: see on_exit.
     if [ -n "$CUR" ]; then
         if held; then
-            WAS_HELD=1
+            RESTORE_HOLD=1
         fi
         opkg flag user hrneo > /dev/null || die "opkg flag user hrneo failed"
     fi
@@ -287,6 +322,7 @@ main() {
         install_failed
     fi
     hold
+    RESTORE_HOLD=
     echo "hrneo $WANT installed from $FEED and held"
 }
 
