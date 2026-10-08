@@ -1,0 +1,12 @@
+Package: hrneo
+Version: 1:3.21.0-1le2
+Architecture: aarch64-3.10
+Depends: libc, ipset, iptables, ip-full
+Installed-Size: 209210
+Maintainer: le0nus (fork of Ground_Zerro HydraRoute)
+Description: DNS-based policy routing daemon for Keenetic
+Section: net
+Filename: hrneo_3.21.0-1le2_aarch64-3.10.ipk
+Size: 118645
+SHA256sum: 2a60b31cc2980b9316682a8f334458a9f3fed40fe2e16ba05bee1ecd8ec01b61
+
