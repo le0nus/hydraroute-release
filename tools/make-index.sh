@@ -1,7 +1,8 @@
 #!/bin/sh
 # Generate opkg Packages and Packages.gz for every keenetic/<arch>/ directory.
+# Usage: tools/make-index.sh [feed root, default: this repository]
 set -eu
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=${1:-$(cd "$(dirname "$0")/.." && pwd)}
 for dir in "$ROOT"/keenetic/*/; do
     ls "$dir"*.ipk >/dev/null 2>&1 || continue
     : > "$dir/Packages"

@@ -1,8 +1,23 @@
 #!/bin/sh
 # Package hrneo the way upstream does: tar.gz of debian-binary, control.tar.gz, data.tar.gz.
 # Usage (inside hrneo-build): build-ipk.sh <Neo/source dir> <binary> <version> <opkg arch> <out dir>
+# <version> may carry an opkg epoch (1:3.21.0-1le2): it goes into control; the
+# file name leaves it out. Prints the path of the package.
 set -eu
 SRC=$1 BIN=$2 VER=$3 ARCH=$4 OUT=$5
+FILEVER=${VER#*:}
+bad_version() {
+    echo "build-ipk.sh: bad version '$VER': want [epoch:]version, letters, digits and . + ~ - only" >&2
+    exit 1
+}
+case $FILEVER in
+    ''|*[!0-9A-Za-z.+~-]*) bad_version ;;
+esac
+if [ "$FILEVER" != "$VER" ]; then
+    case ${VER%%:*} in
+        ''|*[!0-9]*) bad_version ;;
+    esac
+fi
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/data" "$WORK/control"
@@ -14,6 +29,7 @@ sed -e "s/@VERSION@/$VER/" -e "s/@ARCH@/$ARCH/" -e "s/@INSTALLED_SIZE@/$SIZE/" \
     -e "s/^Maintainer: .*/Maintainer: le0nus (fork of Ground_Zerro HydraRoute)/" \
     "$SRC/ipk/control/control.in" > "$WORK/control/control"
 install -m 0755 "$SRC/ipk/control/postinst" "$WORK/control/postinst"
+install -m 0755 "$SRC/ipk/control/prerm" "$WORK/control/prerm"
 install -m 0644 "$SRC/ipk/control/conffiles" "$WORK/control/conffiles"
 install -m 0644 "$SRC/ipk/debian-binary" "$WORK/debian-binary"
 T="tar --owner=0 --group=0 --numeric-owner"
@@ -21,5 +37,5 @@ T="tar --owner=0 --group=0 --numeric-owner"
 (cd "$WORK/data" && $T -czf ../data.tar.gz ./)
 mkdir -p "$OUT"
 rm -f "$OUT"/hrneo_*_"$ARCH".ipk "$OUT"/hrneo_*_"$ARCH".ipk.source
-(cd "$WORK" && $T -czf "$OUT/hrneo_${VER}_${ARCH}.ipk" ./debian-binary ./control.tar.gz ./data.tar.gz)
-echo "$OUT/hrneo_${VER}_${ARCH}.ipk"
+(cd "$WORK" && $T -czf "$OUT/hrneo_${FILEVER}_${ARCH}.ipk" ./debian-binary ./control.tar.gz ./data.tar.gz)
+echo "$OUT/hrneo_${FILEVER}_${ARCH}.ipk"
