@@ -1,5 +1,7 @@
 # hydraroute-release
 
+**Инструкция по установке на русском: [INSTALL-ru.md](INSTALL-ru.md).**
+
 opkg feed for a fork of [HydraRoute Neo](https://github.com/Ground-Zerro/HydraRoute) (`hrneo`), AGPL-3.0.
 Fork sources: https://github.com/le0nus/HydraRoute (development branch `feat/raw-guard`).
 The published package hrneo 1:3.21.0-1le2 is built from tag
